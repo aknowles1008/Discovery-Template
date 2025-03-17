@@ -1,0 +1,95 @@
+from flask import Flask, render_template, request, jsonify, send_file
+import pandas as pd
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+import io
+from fpdf import FPDF
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///activities.db'
+app.config['SECRET_KEY'] = 'your_secret_key'
+db = SQLAlchemy(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+
+# User Role Model
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), unique=True, nullable=False)
+    password = db.Column(db.String(150), nullable=False)
+    role = db.Column(db.String(50), nullable=False)  # 'user', 'manager', 'admin'
+    department = db.Column(db.String(100), nullable=False)  # Added department field
+
+# Activity Model
+class Activity(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user_name = db.Column(db.String(150), nullable=False)  # Added user name field
+    department = db.Column(db.String(100), nullable=False)  # Added department field
+    activity_name = db.Column(db.String(200), nullable=False)
+    category = db.Column(db.String(100), nullable=False)
+    frequency = db.Column(db.String(50), nullable=False)
+    hours_per_week = db.Column(db.Float, nullable=False)
+    fte_equivalent = db.Column(db.Float, nullable=False)
+    status = db.Column(db.String(100), nullable=False)
+    technology_used = db.Column(db.String(100), nullable=True)
+    comments = db.Column(db.Text, nullable=True)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/export/excel')
+@login_required
+def export_excel():
+    activities = Activity.query.all()
+    df = pd.DataFrame([{ 
+        'User Name': a.user_name,
+        'Department': a.department,
+        'Activity': a.activity_name,
+        'Category': a.category,
+        'Frequency': a.frequency,
+        'Hours Per Week': a.hours_per_week,
+        'FTE Equivalent': a.fte_equivalent,
+        'Status': a.status,
+        'Technology Used': a.technology_used,
+        'Comments': a.comments
+    } for a in activities])
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Activities')
+    output.seek(0)
+    return send_file(output, download_name='activities.xlsx', as_attachment=True)
+
+@app.route('/export/pdf')
+@login_required
+def export_pdf():
+    activities = Activity.query.all()
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, "Activity Report", ln=True, align='C')
+    pdf.ln(10)
+    
+    for a in activities:
+        pdf.cell(0, 10, f"User: {a.user_name} | Department: {a.department}", ln=True)
+        pdf.cell(0, 10, f"Activity: {a.activity_name} | Category: {a.category}", ln=True)
+        pdf.cell(0, 10, f"Frequency: {a.frequency} | Hours Per Week: {a.hours_per_week}", ln=True)
+        pdf.cell(0, 10, f"FTE: {a.fte_equivalent} | Status: {a.status}", ln=True)
+        pdf.cell(0, 10, f"Technology: {a.technology_used} | Comments: {a.comments}", ln=True)
+        pdf.ln(5)
+    
+    output = io.BytesIO()
+    pdf.output(output)
+    output.seek(0)
+    return send_file(output, download_name='activities.pdf', as_attachment=True)
+
+if __name__ == '__main__':
+    db.create_all()
+    app.run(debug=True)
